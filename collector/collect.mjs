@@ -126,9 +126,23 @@ function writeJSON(path, value) {
 	renameSync(temp, path);
 }
 //#endregion
+//#region lib/schedule.ts
+var HOUR$2 = 36e5, DAY$2 = 24 * HOUR$2, KST = 9 * HOUR$2;
+function dailySlot(now = Date.now()) {
+	const korea = now + KST;
+	const today = Math.floor(korea / DAY$2) * DAY$2 + 6 * HOUR$2 - KST;
+	return now >= today ? today : today - DAY$2;
+}
+function nextDaily(now = Date.now()) {
+	return dailySlot(now) + DAY$2;
+}
+function nextHour(now = Date.now()) {
+	return (Math.floor(now / HOUR$2) + 1) * HOUR$2;
+}
+//#endregion
 //#region lib/refresh-policy.ts
 var HOUR$1 = 36e5;
-var DAY$2 = 24 * HOUR$1;
+var DAY$1 = 24 * HOUR$1;
 var WARNING_INTERVAL = 30 * 6e4;
 function retryDelay(attempt) {
 	return [
@@ -138,7 +152,7 @@ function retryDelay(attempt) {
 	][Math.min(Math.max(0, attempt), 2)];
 }
 function monthlyTtl(month, latest) {
-	return month >= latest ? DAY$2 / 1e3 : 30 * DAY$2 / 1e3;
+	return month >= latest ? Math.max(60, (nextDaily() - Date.now()) / 1e3) : 30 * DAY$1 / 1e3;
 }
 function monthlyBatch(month) {
 	return `population-month-v2:${month}`;
@@ -548,7 +562,7 @@ function baseFor(kind, now, back = 0) {
 		d.setUTCMinutes(30, 0, 0);
 		d.setUTCHours(d.getUTCHours() - back);
 	} else {
-		d.setUTCMinutes(d.getUTCMinutes() - 40);
+		d.setUTCMinutes(d.getUTCMinutes() - 10);
 		d.setUTCMinutes(0, 0, 0);
 		d.setUTCHours(d.getUTCHours() - back);
 	}
@@ -957,7 +971,7 @@ async function collectWeather(grid) {
 				numOfRows: "100",
 				...params
 			})) url.searchParams.set(k, v);
-			const items = await getJSON(url, cacheKey, ttl, true);
+			const items = await getJSON(url, cacheKey, path.includes("getMsrstnAcctoRltmMesureDnsty") ? 1200 : ttl, true);
 			const base = items.map((x) => x.dataTime ?? "").sort((a, b) => issuedTimestamp(b) - issuedTimestamp(a))[0] ?? null;
 			return {
 				items,
@@ -1202,7 +1216,7 @@ async function collectAndSave() {
 		const previous = await readApiCache("weather-retry-v2");
 		const attempt = failures.length ? (previous?.attempt ?? 0) + 1 : 0;
 		await writeApiCache("weather-retry-v2", { attempt }, 86400);
-		const nextDue = failures.length ? now + retryDelay(attempt - 1) : (Math.floor(now / 36e5) + 1) * 36e5;
+		const nextDue = failures.length ? now + retryDelay(attempt - 1) : (Math.floor(now / 18e5) + 1) * 18e5;
 		await db$3().prepare("UPDATE collection_state SET lease_until=0,next_due=?,last_finished=?,last_error=? WHERE id='weather' AND last_started=?").bind(nextDue, now, failures.length ? "일부 자료 수집 지연 · 마지막 저장 자료 표시" : null, started).run();
 	}
 	return {
@@ -1899,10 +1913,10 @@ async function collectPopulation(force = false) {
 		const retry = await readApiCache(retryKey);
 		const attempt = data.errors.length ? (retry?.attempt ?? 0) + 1 : 0;
 		await writeApiCache(retryKey, { attempt }, 7 * 86400);
-		const due = data.errors.length ? finished + (data.errors.every((e) => e.includes("공개 대기")) ? DAY$2 : retryDelay(attempt - 1)) : ongoing ? finished + 1e3 : finished + DAY$2;
+		const due = data.errors.length ? finished + (data.errors.every((e) => e.includes("공개 대기")) ? DAY$1 : retryDelay(attempt - 1)) : ongoing ? finished + 1e3 : nextDaily(finished);
 		data.pending = ongoing && !data.errors.length;
 		await db$2().batch([db$2().prepare("INSERT INTO population_snapshot (id,payload,saved_at) VALUES ('uijeongbu',?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,saved_at=excluded.saved_at").bind(JSON.stringify(data), finished), db$2().prepare("UPDATE collection_state SET lease_until=0,next_due=?,last_finished=?,last_error=? WHERE id='population' AND last_started=?").bind(due, finished, data.errors.join(" · ") || null, started)]);
-		await db$2().prepare("DELETE FROM population_jobs WHERE id GLOB 'population-??????-[0-9]*' AND saved_at<?").bind(finished - 2 * DAY$2).run();
+		await db$2().prepare("DELETE FROM population_jobs WHERE id GLOB 'population-??????-[0-9]*' AND saved_at<?").bind(finished - 2 * DAY$1).run();
 	}
 	return {
 		started: true,
@@ -1997,7 +2011,7 @@ async function collectPopulationAreas(id, month) {
 		data.total = checkpoint.total;
 	}
 	await saveJob$1(key, data);
-	await db$2().prepare("UPDATE collection_state SET lease_until=0,next_due=?,last_finished=?,last_error=? WHERE id=? AND last_started=?").bind(data.error ? Date.now() + 15 * 6e4 : data.done ? Date.now() + 30 * DAY$2 : Date.now() + 1e3, Date.now(), data.error, key, started).run();
+	await db$2().prepare("UPDATE collection_state SET lease_until=0,next_due=?,last_finished=?,last_error=? WHERE id=? AND last_started=?").bind(data.error ? Date.now() + 15 * 6e4 : data.done ? Date.now() + 30 * DAY$1 : Date.now() + 1e3, Date.now(), data.error, key, started).run();
 	return { started: true };
 }
 async function loadPopulationAreas(id, month) {
@@ -2016,7 +2030,7 @@ async function loadPopulationAreas(id, month) {
 	};
 }
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/fast-xml-parser@5.11.2/node_modules/fast-xml-parser/src/util.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/fast-xml-parser@5.11.2/node_modules/fast-xml-parser/src/util.js
 var nameStartChar = ":A-Za-z_\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u02FF\\u0370-\\u037D\\u037F-\\u1FFF\\u200C-\\u200D\\u2070-\\u218F\\u2C00-\\u2FEF\\u3001-\\uD7FF\\uF900-\\uFDCF\\uFDF0-\\uFFFD";
 nameStartChar + "";
 var nameRegexp = "[" + nameStartChar + "][:A-Za-z_\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u02FF\\u0370-\\u037D\\u037F-\\u1FFF\\u200C-\\u200D\\u2070-\\u218F\\u2C00-\\u2FEF\\u3001-\\uD7FF\\uF900-\\uFDCF\\uFDF0-\\uFFFD\\-.\\d\\u00B7\\u0300-\\u036F\\u203F-\\u2040]*";
@@ -2059,7 +2073,7 @@ var criticalProperties = [
 	"prototype"
 ];
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/fast-xml-parser@5.11.2/node_modules/fast-xml-parser/src/validator.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/fast-xml-parser@5.11.2/node_modules/fast-xml-parser/src/validator.js
 var defaultOptions$1 = {
 	allowBooleanAttributes: false,
 	unpairedTags: []
@@ -2372,7 +2386,7 @@ function getPositionFromMatch(match) {
 	return match.startIndex + match[1].length;
 }
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/@nodable+entities@3.1.0/node_modules/@nodable/entities/src/entities.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/@nodable+entities@3.1.0/node_modules/@nodable/entities/src/entities.js
 /**
 * Currency Symbols
 * @type {Record<string, string>}
@@ -2424,7 +2438,7 @@ var COMMON_HTML = {
 	frac34: "¾"
 };
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/@nodable+entities@3.1.0/node_modules/@nodable/entities/src/EntityDecoder.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/@nodable+entities@3.1.0/node_modules/@nodable/entities/src/EntityDecoder.js
 /**
 * Action constants for `onExternalEntity` and `onInputEntity` hooks.
 *
@@ -2889,7 +2903,7 @@ var EntityDecoder = class {
 	}
 };
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/fast-xml-parser@5.11.2/node_modules/fast-xml-parser/src/xmlparser/OptionsBuilder.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/fast-xml-parser@5.11.2/node_modules/fast-xml-parser/src/xmlparser/OptionsBuilder.js
 var defaultOnDangerousProperty = (name) => {
 	if (DANGEROUS_PROPERTY_NAMES.includes(name)) return "__" + name;
 	return name;
@@ -3016,7 +3030,7 @@ var buildOptions = function(options) {
 	return built;
 };
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/fast-xml-parser@5.11.2/node_modules/fast-xml-parser/src/xmlparser/xmlNode.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/fast-xml-parser@5.11.2/node_modules/fast-xml-parser/src/xmlparser/xmlNode.js
 var METADATA_SYMBOL$1;
 if (typeof Symbol !== "function") METADATA_SYMBOL$1 = "@@xmlMetadata";
 else METADATA_SYMBOL$1 = Symbol("XML Node Metadata");
@@ -3052,7 +3066,7 @@ var XmlNode = class {
 	}
 };
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/xml-naming@0.3.0/node_modules/xml-naming/src/index.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/xml-naming@0.3.0/node_modules/xml-naming/src/index.js
 /**
 * xml-naming
 * Validates XML Name productions as defined in the XML 1.0 and 1.1 specifications.
@@ -3094,7 +3108,7 @@ var getRegexes = (xmlVersion = "1.0", asciiOnly = false) => {
 */
 var qName = (str, { xmlVersion = "1.0", asciiOnly = false } = {}) => getRegexes(xmlVersion, asciiOnly).qName.test(str);
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/fast-xml-parser@5.11.2/node_modules/fast-xml-parser/src/xmlparser/DocTypeReader.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/fast-xml-parser@5.11.2/node_modules/fast-xml-parser/src/xmlparser/DocTypeReader.js
 var DocTypeReader = class {
 	constructor(options, xmlVersion) {
 		this.suppressValidationErr = !options;
@@ -3330,7 +3344,7 @@ function validateEntityName(name, xmlVersion) {
 	else throw new Error(`Invalid entity name ${name}`);
 }
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/anynum@1.0.1/node_modules/anynum/digitTable.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/anynum@1.0.1/node_modules/anynum/digitTable.js
 /**
 * Flat lookup table: maps Unicode code point → ASCII digit (0-9).
 * Only decimal digit characters (Unicode category Nd) are included.
@@ -3417,7 +3431,7 @@ for (const zero of SCRIPT_ZEROS) for (let d = 0; d < 10; d++) {
 	else HIGH_MAP.set(cp, d);
 }
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/anynum@1.0.1/node_modules/anynum/anynum.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/anynum@1.0.1/node_modules/anynum/anynum.js
 var CHAR_0 = 48;
 var CHAR_9 = 57;
 var CHAR_MINUS = 45;
@@ -3514,7 +3528,7 @@ function anynum(str) {
 	return chars.join("");
 }
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/strnum@2.4.2/node_modules/strnum/strnum.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/strnum@2.4.2/node_modules/strnum/strnum.js
 var hexRegex = /^[-+]?0x[a-fA-F0-9]+$/;
 var binRegex = /^0b[01]+$/;
 var octRegex = /^0o[0-7]+$/;
@@ -3630,7 +3644,7 @@ function handleInfinity(str, num, options) {
 	}
 }
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/fast-xml-parser@5.11.2/node_modules/fast-xml-parser/src/ignoreAttributes.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/fast-xml-parser@5.11.2/node_modules/fast-xml-parser/src/ignoreAttributes.js
 function getIgnoreAttributesFn(ignoreAttributes) {
 	if (typeof ignoreAttributes === "function") return ignoreAttributes;
 	if (Array.isArray(ignoreAttributes)) return (attrName) => {
@@ -3642,7 +3656,7 @@ function getIgnoreAttributesFn(ignoreAttributes) {
 	return () => false;
 }
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/path-expression-matcher@1.6.2/node_modules/path-expression-matcher/src/Expression.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/path-expression-matcher@1.6.2/node_modules/path-expression-matcher/src/Expression.js
 /**
 * Expression - Parses and stores a tag pattern expression
 * 
@@ -3794,7 +3808,7 @@ var Expression = class {
 	}
 };
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/path-expression-matcher@1.6.2/node_modules/path-expression-matcher/src/ExpressionSet.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/path-expression-matcher@1.6.2/node_modules/path-expression-matcher/src/ExpressionSet.js
 /**
 * ExpressionSet - An indexed collection of Expressions for efficient bulk matching
 *
@@ -3979,7 +3993,7 @@ var ExpressionSet = class {
 	}
 };
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/path-expression-matcher@1.6.2/node_modules/path-expression-matcher/src/Matcher.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/path-expression-matcher@1.6.2/node_modules/path-expression-matcher/src/Matcher.js
 /**
 * MatcherView - A lightweight read-only view over a Matcher's internal state.
 *
@@ -4484,7 +4498,7 @@ var Matcher = class {
 	}
 };
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe/src/contexts/html.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe/src/contexts/html.js
 /**
 * HTML context patterns.
 *
@@ -4582,7 +4596,7 @@ var HTML_PATTERNS = [
 	}
 ];
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe/src/contexts/xml.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe/src/contexts/xml.js
 /**
 * XML context patterns.
 *
@@ -4657,7 +4671,7 @@ var XML_PATTERNS = [
 	}
 ];
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe/src/contexts/svg.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe/src/contexts/svg.js
 /**
 * SVG context patterns.
 *
@@ -4735,7 +4749,7 @@ var SVG_PATTERNS = [
 	}
 ];
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe/src/contexts/sql.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe/src/contexts/sql.js
 /**
 * SQL context patterns — high-precision rules only.
 *
@@ -4827,7 +4841,7 @@ var SQL_PATTERNS = [
 	}
 ];
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe/src/contexts/shell.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe/src/contexts/shell.js
 /**
 * SHELL context patterns.
 *
@@ -4928,7 +4942,7 @@ var SHELL_PATTERNS = [
 	}
 ];
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe/src/contexts/redos.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe/src/contexts/redos.js
 /**
 * REDOS context patterns.
 *
@@ -4983,7 +4997,7 @@ var REDOS_PATTERNS = [
 	}
 ];
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe/src/contexts/nosql.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe/src/contexts/nosql.js
 var sep = "[\"'\\s]*:";
 var NOSQL_PATTERNS = [
 	{
@@ -5068,7 +5082,7 @@ var NOSQL_PATTERNS = [
 	}
 ];
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe/src/contexts/log.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe/src/contexts/log.js
 /**
 * LOG context patterns.
 *
@@ -5152,7 +5166,7 @@ var LOG_PATTERNS = [
 	}
 ];
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe/src/contexts/sql-strict.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe/src/contexts/sql-strict.js
 /**
 * SQL-STRICT context patterns.
 *
@@ -5194,7 +5208,7 @@ var SQL_STRICT_EXTRA = [
 ];
 var SQL_STRICT_PATTERNS = [...SQL_PATTERNS, ...SQL_STRICT_EXTRA];
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe/src/index.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe/src/index.js
 HTML_PATTERNS.label = "HTML";
 XML_PATTERNS.label = "XML";
 SVG_PATTERNS.label = "SVG";
@@ -5312,7 +5326,7 @@ function isUnsafe(value, context) {
 	return false;
 }
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/fast-xml-parser@5.11.2/node_modules/fast-xml-parser/src/xmlparser/OrderedObjParser.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/fast-xml-parser@5.11.2/node_modules/fast-xml-parser/src/xmlparser/OrderedObjParser.js
 /**
 * Extract raw attributes (without prefix) from prefixed attribute map
 * @param {object} prefixedAttrs - Attributes with prefix from buildAttributesMap
@@ -5835,7 +5849,7 @@ function sanitizeName(name, options) {
 	return name;
 }
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/fast-xml-parser@5.11.2/node_modules/fast-xml-parser/src/xmlparser/node2json.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/fast-xml-parser@5.11.2/node_modules/fast-xml-parser/src/xmlparser/node2json.js
 var METADATA_SYMBOL = XmlNode.getMetaDataSymbol();
 /**
 * Helper function to strip attribute prefix from attribute map
@@ -5935,7 +5949,7 @@ function isLeafTag(obj, options) {
 	return false;
 }
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/fast-xml-parser@5.11.2/node_modules/fast-xml-parser/src/xmlparser/XMLParser.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/fast-xml-parser@5.11.2/node_modules/fast-xml-parser/src/xmlparser/XMLParser.js
 var XMLParser = class {
 	constructor(options) {
 		this.externalEntities = {};
@@ -5986,7 +6000,7 @@ var XMLParser = class {
 	}
 };
 //#endregion
-//#region ../../../sites/uijeongbu-did/node_modules/.pnpm/fast-xml-parser@5.11.2/node_modules/fast-xml-parser/src/fxp.js
+//#region ../../../../sites/uijeongbu-did/node_modules/.pnpm/fast-xml-parser@5.11.2/node_modules/fast-xml-parser/src/fxp.js
 var XMLValidator = { validate };
 //#endregion
 //#region lib/births.ts
@@ -6088,7 +6102,7 @@ async function collectBirths(force = false) {
 		data.error = e instanceof Error && e.name !== "TimeoutError" ? e.message : "출생등록 제공기관 연결 지연 · 기존 자료 유지";
 	}
 	await db$1().prepare("INSERT INTO population_jobs(id,payload,saved_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,saved_at=excluded.saved_at").bind(SNAPSHOT, JSON.stringify(data), Date.now()).run();
-	await db$1().prepare("UPDATE collection_state SET lease_until=0,next_due=?,last_finished=?,last_error=? WHERE id='births' AND last_started=?").bind(Date.now() + (data.error ? 15 * 6e4 : data.pending ? 1e3 : DAY$2), Date.now(), data.error, now).run();
+	await db$1().prepare("UPDATE collection_state SET lease_until=0,next_due=?,last_finished=?,last_error=? WHERE id='births' AND last_started=?").bind(data.error ? Date.now() + 15 * 6e4 : data.pending ? Date.now() + 1e3 : nextDaily(), Date.now(), data.error, now).run();
 }
 async function loadBirths() {
 	const [data, state] = await Promise.all([read(), db$1().prepare("SELECT lease_until,next_due FROM collection_state WHERE id='births'").first()]);
@@ -6247,7 +6261,6 @@ function summarizeCommerce(stores, runId, collectedAt, expected, previous) {
 }
 //#endregion
 //#region lib/commerce-store.ts
-var DAY$1 = 864e5;
 function db() {
 	if (!env.DB) throw Error("상권 DB 연결 확인 필요");
 	return env.DB;
@@ -6338,7 +6351,7 @@ async function collectCommerce(force = false) {
 	if (retry && retry.due > now) return status(j);
 	if (force && j?.error) j = null;
 	if (j?.status !== "pending") {
-		if (!force && previous && now - Date.parse(previous.collectedAt) < DAY$1) return status(j);
+		if (!force && previous && Date.parse(previous.collectedAt) >= dailySlot(now)) return status(j);
 		j = {
 			runId: crypto.randomUUID(),
 			nextPage: 1,
@@ -6924,7 +6937,7 @@ function normalizeHouseholdSizes(rows, month, fields = {}) {
 var active = /* @__PURE__ */ new Map();
 async function collect(month) {
 	return monthlyCached(`household-sizes:v1:${month}`, monthlyTtl(month, recentMonths()[0]), async () => {
-		let key = env.HOUSEHOLD_SIZE_API_KEY ?? env.POPULATION_API_KEY;
+		let key = env.HOUSEHOLD_SIZE_API_KEY || env.POPULATION_API_KEY;
 		if (!key) throw Error("세대원수별 API 연결 설정 확인 필요");
 		try {
 			key = decodeURIComponent(key);
@@ -7244,6 +7257,19 @@ async function runCommerce() {
 		if (!result.pending || result.error) break;
 	}
 }
+async function statisticsDue() {
+	for (const id of ["population", "births"]) if ((await state(id))?.last_error && await due(id)) return true;
+	const pop = await readPopulation(), birth = await loadBirths(), commerce = await loadCommerce();
+	if (pop?.pending && await due("population") || birth.pending && await due("births")) return true;
+	const retry = await readApiCache("commerce-retry-v2");
+	if ((commerce.status.pending || commerce.status.error) && !(retry?.due > Date.now())) return true;
+	if (await database.prepare("SELECT id FROM collection_state WHERE (id LIKE 'cache:%' AND last_error IS NOT NULL OR id LIKE 'population-areas:%') AND next_due<=? AND lease_until<=? LIMIT 1").bind(Date.now(), Date.now()).first()) return true;
+	return due("statistics-daily");
+}
+async function markStatistics() {
+	const now = Date.now();
+	await database.prepare("INSERT INTO collection_state(id,next_due,lease_until,last_started,last_finished,last_error) VALUES(?,?,0,?,?,NULL) ON CONFLICT(id) DO UPDATE SET next_due=excluded.next_due,lease_until=0,last_started=excluded.last_started,last_finished=excluded.last_finished,last_error=NULL").bind("statistics-daily", remaining() < 9e4 ? now + 15 * 6e4 : nextDaily(now), now, now).run();
+}
 async function collectNews() {
 	if (!await due("news")) return;
 	const started = Date.now(), old = readJSON(paths.news, {
@@ -7277,7 +7303,7 @@ async function collectNews() {
 		};
 	}
 	writeJSON(paths.news, next);
-	await database.prepare("INSERT INTO collection_state(id,next_due,lease_until,last_started,last_finished,last_error) VALUES(?,?,0,?,?,?) ON CONFLICT(id) DO UPDATE SET next_due=excluded.next_due,lease_until=0,last_started=excluded.last_started,last_finished=excluded.last_finished,last_error=excluded.last_error").bind("news", Date.now() + HOUR, started, Date.now(), next.error).run();
+	await database.prepare("INSERT INTO collection_state(id,next_due,lease_until,last_started,last_finished,last_error) VALUES(?,?,0,?,?,?) ON CONFLICT(id) DO UPDATE SET next_due=excluded.next_due,lease_until=0,last_started=excluded.last_started,last_finished=excluded.last_finished,last_error=excluded.last_error").bind("news", nextHour(), started, Date.now(), next.error).run();
 }
 async function buildExport() {
 	const d = { ...original };
@@ -7349,6 +7375,10 @@ async function exportData() {
 	}));
 }
 async function selfTest() {
+	assert.equal(baseFor("getUltraSrtNcst", /* @__PURE__ */ new Date("2026-11-12T17:22:00+09:00")).time, "1700");
+	assert.equal(baseFor("getUltraSrtNcst", /* @__PURE__ */ new Date("2026-11-12T17:09:00+09:00")).time, "1600");
+	assert.equal(new Date(nextDaily(Date.parse("2026-11-12T06:22:00+09:00"))).toISOString(), "2026-11-12T21:00:00.000Z");
+	assert.equal(new Date(nextHour(Date.parse("2026-11-12T17:22:30+09:00"))).toISOString(), "2026-11-12T09:00:00.000Z");
 	const x = new JsonDatabase();
 	await x.prepare("INSERT INTO collection_state VALUES('test',9999999999999,9999999999999,1,NULL,NULL)").run();
 	const y = new JsonDatabase();
@@ -7432,23 +7462,35 @@ async function main() {
 			...options,
 			signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(9e4)]) : AbortSignal.timeout(9e4)
 		});
-		await runJob("warnings", async () => {
-			const s = await state("warnings");
-			if (await due("warnings") && (!s || Date.now() - s.last_started >= 30 * 6e4)) await collectWarnings();
-		});
-		await runJob("weather", async () => {
-			if (await due("weather")) await collectAndSave();
-		});
-		await runJob("population", runPopulation);
-		await runJob("births", runBirths);
-		await runJob("monthly", runMonthly);
-		await runJob("areas", runAreas);
-		await runJob("commerce", runCommerce);
-		await runJob("home", async () => {
-			await checkNewTraffic();
-			await refreshHomeSummary();
-		});
-		await runJob("news", collectNews);
+		const realtime = process.argv.includes("--realtime"), statistics = process.argv.includes("--statistics");
+		if (!statistics) {
+			await runJob("warnings", async () => {
+				const s = await state("warnings");
+				if (await due("warnings") && (!s || Date.now() - s.last_started >= 30 * 6e4)) await collectWarnings();
+			});
+			await runJob("weather", async () => {
+				if (await due("weather")) await collectAndSave();
+			});
+			await runJob("news", collectNews);
+			await runJob("home", async () => {
+				await refreshHomeSummary();
+			});
+		}
+		if (!realtime && await statisticsDue()) {
+			await runJob("population", runPopulation);
+			await runJob("births", runBirths);
+			await runJob("monthly", runMonthly);
+			await runJob("areas", runAreas);
+			await runJob("commerce", runCommerce);
+			await runJob("traffic", checkNewTraffic);
+			await runJob("home", async () => {
+				await refreshHomeSummary();
+			});
+			await markStatistics();
+		} else if (statistics) {
+			console.log("통계: 다음 예정시각 대기 · 기존 자료 유지");
+			return;
+		}
 		await exportData();
 		await checkpoint();
 		await reportNewErrors();
