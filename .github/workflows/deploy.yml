@@ -1,0 +1,44 @@
+name: 통합 DID 사이트 게시
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: 저장소 파일 가져오기
+        uses: actions/checkout@v6
+
+      - name: Pages 준비
+        uses: actions/configure-pages@v5
+
+      - name: 웹페이지 파일 확인
+        run: |
+          test -f web/index.html
+          test -f web/data.json
+          test -f web/news.json
+
+      - name: 웹페이지 업로드
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: web
+
+      - name: 사이트 게시
+        id: deployment
+        uses: actions/deploy-pages@v4
