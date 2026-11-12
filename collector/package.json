@@ -1,0 +1,1 @@
+{"name":"ujb-did-collector","private":true,"type":"module","engines":{"node":">=24"},"scripts":{"collect":"node collect.mjs","test":"node collect.mjs --self-test"}}
