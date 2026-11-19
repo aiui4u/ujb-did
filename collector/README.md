@@ -7,18 +7,6 @@ node collector/collect.mjs --self-test
 node collector/collect.mjs
 ```
 
-추가 패키지 설치가 필요하지 않습니다.
-
-필수 GitHub Actions Secrets:
-- KMA_API_KEY
-- AIRKOREA_API_KEY
-- POPULATION_API_KEY
-- BIRTH_API_KEY
-- COMMERCE_API_KEY
-- TRAFFIC_API_KEY
-
-세대원수 API는 POPULATION_API_KEY를 함께 사용합니다. 해당 서비스의 키가 다를 때만 선택적으로 HOUSEHOLD_SIZE_API_KEY를 등록합니다. 같은 키를 쓰더라도 이용하는 각 API의 활용승인이 필요합니다.
-
 데이터: 기존 web/data.json, web/news.json을 읽고 갱신합니다.
 진행 상태: collector/state.json에 수집 예정시각, 실행 잠금, 페이지 진행, 캐시를 JSON으로 저장합니다. 인증키는 저장하지 않습니다.
 실행 순서: 특보, 시청 대표 날씨·대기질, 인구, 출생, 월별 인구 부가통계, 기존 대기 통반 상세, 상권, 홈·교통 신규연도 점검, Google RSS.
