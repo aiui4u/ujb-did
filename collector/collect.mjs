@@ -276,7 +276,7 @@ function parseWarningStatus(row, now) {
 			const { matches, unresolved } = gyeonggiAreas(section);
 			if (unresolved) data.parseNotes.push(`${kind} ${level} 구역 확인 필요`);
 			const targets = /* @__PURE__ */ new Map();
-			if (/경기(?:북부|남부)/.test(section) && !matches.length) data.parseNotes.push(`${kind} ${level} 광역 구역 확인 필요`);
+			if (/경기(?:북부|남부)(?!\s*(?:앞바다|(?:안쪽|바깥)?먼바다|해상))/.test(section) && !matches.length) data.parseNotes.push(`${kind} ${level} 광역 구역 확인 필요`);
 			if (!matches.length) for (const name of GYEONGGI_CITIES) {
 				const found = section.match(new RegExp(`(?:^|[\\s,(])(${name}(?:[동서남북][^,()\\s]*)?)(?=$|[,()\\s])`));
 				if (found) targets.set(name, [found[1]]);
