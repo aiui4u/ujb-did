@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 
@@ -15,30 +16,67 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
+    name: 게시 파일 준비
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
+    timeout-minutes: 5
     steps:
-      - name: 저장소 파일 가져오기
+      - name: 최신 저장소 파일 가져오기
         uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: 웹페이지 파일 확인
+        run: |
+          test -s web/index.html
+          test -s web/data.json
+          test -s web/news.json
+          python3 - <<'PY'
+          import json
+          for name in ('data.json', 'news.json'):
+              with open('web/' + name, encoding='utf-8') as f:
+                  json.load(f)
+          PY
 
       - name: Pages 준비
         uses: actions/configure-pages@v5
 
-      - name: 웹페이지 파일 확인
-        run: |
-          test -f web/index.html
-          test -f web/data.json
-          test -f web/news.json
-
-      - name: 웹페이지 업로드
+      - name: 게시 파일 업로드
+        id: upload
         uses: actions/upload-pages-artifact@v4
         with:
+          name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
           path: web
+          retention-days: 1
 
+      - name: 업로드 완료 확인
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact_id }}
+        run: |
+          test -n "$ARTIFACT_ID"
+          for attempt in 1 2 3 4 5 6; do
+            if gh api "repos/$GH_REPO/actions/artifacts/$ARTIFACT_ID" --silent >/dev/null 2>&1; then
+              echo "게시 파일 업로드 확인 완료"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "게시 파일 확인이 지연돼 게시를 중단합니다. 전체 작업을 다시 실행해 주세요."
+          exit 1
+
+  deploy:
+    name: 사이트 게시
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - name: 사이트 게시
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
+        with:
+          artifact_name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
